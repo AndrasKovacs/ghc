@@ -129,8 +129,8 @@ dmdAnal _ _ (Lit lit)     = (topDmdType, Lit lit)
 dmdAnal _ _ (Type ty)     = (topDmdType, Type ty)	-- Doesn't happen, in fact
 dmdAnal _ _ (Coercion co) = (topDmdType, Coercion co)
 
-dmdAnal env dmd (Var var)
-  = (dmdTransform env var dmd, Var var)
+dmdAnal env dmd (Var var)     = dmdAnalVarApp env dmd var []
+dmdAnal env dmd (App fun arg) = dmdAnalApp    env dmd fun [arg]
 
 dmdAnal env dmd (Cast e co)
   = (dmd_ty, Cast e' co)
@@ -154,35 +154,6 @@ dmdAnal env dmd (Tick t e)
   = (dmd_ty, Tick t e')
   where
     (dmd_ty, e') = dmdAnal env dmd e
-
-dmdAnal env dmd (App fun (Type ty))
-  = (fun_ty, App fun' (Type ty))
-  where
-    (fun_ty, fun') = dmdAnal env dmd fun
-
-dmdAnal sigs dmd (App fun (Coercion co))
-  = (fun_ty, App fun' (Coercion co))
-  where
-    (fun_ty, fun') = dmdAnal sigs dmd fun
-
--- Lots of the other code is there to make this
--- beautiful, compositional, application rule :-)
-dmdAnal env dmd (App fun arg)	-- Non-type arguments
-  = let				-- [Type arg handled above]
-        call_dmd          = mkCallDmd dmd
-	(fun_ty, fun') 	  = dmdAnal env call_dmd fun
-	(arg_dmd, res_ty) = splitDmdTy fun_ty
-        (arg_ty, arg') 	  = dmdAnalArg env arg_dmd arg
-    in
---    pprTrace "dmdAnal:app" (vcat
---         [ text "dmd =" <+> ppr dmd
---         , text "expr =" <+> ppr (App fun arg)
---         , text "fun dmd_ty =" <+> ppr fun_ty
---         , text "arg dmd =" <+> ppr arg_dmd
---         , text "arg dmd_ty =" <+> ppr arg_ty
---         , text "res dmd_ty =" <+> ppr res_ty
---         , text "overall res dmd_ty =" <+> ppr (res_ty `bothDmdType` arg_ty) ])
-    (res_ty `bothDmdType` arg_ty, App fun' arg')
 
 -- this is an anonymous lambda, since @dmdAnalRhs@ uses @collectBinders@
 dmdAnal env dmd (Lam var body)
@@ -215,7 +186,7 @@ dmdAnal env dmd (Case scrut case_bndr ty [alt@(DataAlt dc, _, _)])
 	(alt_ty, alt')	      = dmdAnalAlt env_alt dmd alt
 	(alt_ty1, case_bndr') = annotateBndr env alt_ty case_bndr
 	(_, bndrs', _)	      = alt'
-	case_bndr_sig	      = cprProdSig
+	case_bndr_sig	      = cprProdSig (dataConRepArity dc)
 		-- Inside the alternative, the case binder has the CPR property.
 		-- Meaning that a case on it will successfully cancel.
 		-- Example:
@@ -503,6 +474,74 @@ dmdTransform env var dmd
 
   | otherwise	 		                 -- Local non-letrec-bound thing
   = unitVarDmd var (mkOnceUsedDmd dmd)
+
+
+----------------
+dmdAnalApp :: AnalEnv -> CleanDemand -> CoreExpr
+           -> [CoreExpr] -> (DmdType, CoreExpr)
+dmdAnalApp env dmd (App fun arg) args = dmdAnalApp env dmd fun (arg:args)
+dmdAnalApp env dmd (Var fun)     args = dmdAnalVarApp env dmd fun args
+dmdAnalApp env dmd other_fun     args = dmdAnalOtherApp env dmd other_fun args
+
+----------------
+dmdAnalOtherApp :: AnalEnv -> CleanDemand -> CoreExpr
+                -> [CoreExpr] -> (DmdType, CoreExpr)
+dmdAnalOtherApp env dmd fun args
+  = completeApp env (dmdAnal env call_dmd fun) args
+  where
+    call_dmd = mkCallDmdN (valArgCount args) dmd
+
+----------------
+completeApp :: AnalEnv 
+            -> (DmdType, CoreExpr)     -- Function and its demand-type
+            -> [CoreExpr]              -- Arguments
+            -> (DmdType, CoreExpr)     -- Function applied to args
+
+completeApp _ fun_ty_fun [] 
+  = fun_ty_fun
+completeApp env (fun_ty, fun') (arg:args)
+  | isTyCoArg arg = completeApp env (fun_ty,                      App fun' arg)  args
+  | otherwise     = completeApp env (res_ty `bothDmdType` arg_ty, App fun' arg') args
+  where
+    (arg_dmd, res_ty) = splitDmdTy fun_ty
+    (arg_ty, arg')    = dmdAnalArg env arg_dmd arg
+
+----------------
+dmdAnalVarApp :: AnalEnv -> CleanDemand -> Id
+              -> [CoreExpr] -> (DmdType, CoreExpr)
+dmdAnalVarApp env dmd fun args
+  | Just con <- isDataConWorkId_maybe fun  -- Data constructor
+  , isVanillaDataCon con
+  , n_val_args == dataConRepArity con      -- Saturated
+  , let cpr_info 
+          | isProductTyCon (dataConTyCon con) = cprProdRes arg_tys
+          | otherwise                         = cprSumRes (dataConTag con)
+        res_ty = foldl bothDmdType (DmdType emptyDmdEnv [] (Converges cpr_info)) arg_tys
+  = pprTrace "dmdAnalVarApp" (vcat [ ppr con, ppr args, ppr n_val_args, ppr cxt_ds
+                                   , ppr arg_tys, ppr (Converges cpr_info), ppr res_ty]) $
+    ( res_ty 
+    , foldl App (Var fun) args')
+
+  | otherwise
+  = completeApp env (dmdTransform env fun (mkCallDmdN n_val_args dmd), Var fun) args
+  where
+    n_val_args = valArgCount args
+    cxt_ds = splitProdCleanDmd  n_val_args dmd
+    (arg_tys, args') = anal_args cxt_ds args
+        -- The constructor itself is lazy
+        -- See Note [Data-con worker strictness] in MkId
+  
+    anal_args :: [Demand] -> [CoreExpr] -> ([DmdType], [CoreExpr])
+    anal_args _ [] = ([],[])
+    anal_args ds (arg : args)
+      | isTyCoArg arg 
+      , (arg_tys, args') <- anal_args ds args
+      = (arg_tys, arg:args')
+    anal_args (d:ds) (arg : args)
+      | (arg_ty,  arg')  <- dmdAnalArg env d arg
+      , (arg_tys, args') <- anal_args ds args
+      = (arg_ty:arg_tys, arg':args')
+    anal_args ds args = pprPanic "anal_args" (ppr args $$ ppr ds)
 \end{code}
 
 %************************************************************************
@@ -617,14 +656,10 @@ dmdAnalRhs top_lvl rec_flag env id rhs
 
     (lazy_fv, sig_fv) = splitFVs is_thunk rhs_fv1
 
-    rhs_res' | returnsCPR rhs_res
-             , discard_cpr_info   = topRes
-             | otherwise          = rhs_res
-
-    discard_cpr_info = nested_sum || (is_thunk && not_strict)
-    nested_sum     -- See Note [CPR for sum types ]
-        = not (isTopLevel top_lvl || returnsCPRProd rhs_res) 
-
+    rhs_res'  = trimCPRInfo trim_all trim_sums rhs_res
+    trim_all  = is_thunk && not_strict
+    trim_sums = not (isTopLevel top_lvl) -- See Note [CPR for sum types]
+        
     -- See Note [CPR for thunks]
     is_thunk = not (exprIsHNF rhs)
     not_strict 
@@ -1090,8 +1125,8 @@ extendSigsWithLam env id
   , isStrictDmd (idDemandInfo id) || ae_virgin env  
        -- See Note [Optimistic CPR in the "virgin" case]
        -- See Note [Initial CPR for strict binders]
-  , Just {} <- deepSplitProductType_maybe $ idType id
-  = extendAnalEnv NotTopLevel env id cprProdSig 
+  , Just (dc,_,_,_) <- deepSplitProductType_maybe $ idType id
+  = extendAnalEnv NotTopLevel env id (cprProdSig (dataConRepArity dc))
 
   | otherwise 
   = env

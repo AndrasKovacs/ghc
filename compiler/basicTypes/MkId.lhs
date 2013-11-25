@@ -394,22 +394,7 @@ mkDataConWorkId wkr_name data_con
                                                      -- even if arity = 0
 
     wkr_sig = mkStrictSig (mkTopDmdType (replicate wkr_arity topDmd) (dataConCPR data_con))
-        --      Note [Data-con worker strictness]
-        -- Notice that we do *not* say the worker is strict
-        -- even if the data constructor is declared strict
-        --      e.g.    data T = MkT !(Int,Int)
-        -- Why?  Because the *wrapper* is strict (and its unfolding has case
-        -- expresssions that do the evals) but the *worker* itself is not.
-        -- If we pretend it is strict then when we see
-        --      case x of y -> $wMkT y
-        -- the simplifier thinks that y is "sure to be evaluated" (because
-        --  $wMkT is strict) and drops the case.  No, $wMkT is not strict.
-        --
-        -- When the simplifer sees a pattern 
-        --      case e of MkT x -> ...
-        -- it uses the dataConRepStrictness of MkT to mark x as evaluated;
-        -- but that's fine... dataConRepStrictness comes from the data con
-        -- not from the worker Id.
+              -- Se Note [Data-con worker strictness]
 
         ----------- Workers for newtypes --------------
     (nt_tvs, _, nt_arg_tys, _) = dataConSig data_con
@@ -434,8 +419,8 @@ dataConCPR con
   , isVanillaDataCon con  -- No existentials 
   , wkr_arity > 0
   , wkr_arity <= mAX_CPR_SIZE
-  = if is_prod then cprProdRes 
-               else cprSumRes (dataConTag con)
+  = if is_prod then Converges (vanillaCprProdRes (dataConRepArity con))
+               else Converges (cprSumRes (dataConTag con))
   | otherwise
   = topRes
   where
@@ -454,6 +439,25 @@ dataConCPR con
     --         by the caller.  So doing CPR for them may in fact make
     --         things worse.
 \end{code}
+
+Note [Data-con worker strictness]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Notice that we do *not* say the worker is strict
+even if the data constructor is declared strict
+     e.g.    data T = MkT !(Int,Int)
+Why?  Because the *wrapper* is strict (and its unfolding has case
+expresssions that do the evals) but the *worker* itself is not.
+If we pretend it is strict then when we see
+     case x of y -> $wMkT y
+the simplifier thinks that y is "sure to be evaluated" (because
+ $wMkT is strict) and drops the case.  No, $wMkT is not strict.
+
+When the simplifer sees a pattern 
+     case e of MkT x -> ...
+it uses the dataConRepStrictness of MkT to mark x as evaluated;
+but that's fine... dataConRepStrictness comes from the data con
+not from the worker Id.
+
 
 -------------------------------------------------
 --         Data constructor representation
