@@ -222,7 +222,7 @@ dmdAnal env dmd (Case scrut case_bndr ty [alt@(DataAlt dc, _, _)])
         scrut_dmd  = scrut_dmd1 `bothCleanDmd` scrut_dmd2
 
 	(scrut_ty, scrut') = dmdAnal env scrut_dmd scrut
-        res_ty             = alt_ty1 `bothDmdType` scrut_ty
+        res_ty             = alt_ty1 `bothDmdTypeCase` scrut_ty
     in
 --    pprTrace "dmdAnal:Case1" (vcat [ text "scrut" <+> ppr scrut
 --                                   , text "dmd" <+> ppr dmd
@@ -238,7 +238,7 @@ dmdAnal env dmd (Case scrut case_bndr ty alts)
 	(alt_tys, alts')     = mapAndUnzip (dmdAnalAlt env dmd) alts
 	(scrut_ty, scrut')   = dmdAnal env cleanEvalDmd scrut
 	(alt_ty, case_bndr') = annotateBndr env (foldr lubDmdType botDmdType alt_tys) case_bndr
-        res_ty               = alt_ty `bothDmdType` scrut_ty
+        res_ty               = alt_ty `bothDmdTypeCase` scrut_ty
     in
 --    pprTrace "dmdAnal:Case2" (vcat [ text "scrut" <+> ppr scrut
 --                                   , text "scrut_ty" <+> ppr scrut_ty
@@ -500,7 +500,7 @@ completeApp :: AnalEnv
 completeApp _ fun_ty_fun [] 
   = fun_ty_fun
 completeApp env (fun_ty, fun') (arg:args)
-  | isTyCoArg arg = completeApp env (fun_ty,                      App fun' arg)  args
+  | isTypeArg arg = completeApp env (fun_ty,                      App fun' arg)  args
   | otherwise     = completeApp env (res_ty `bothDmdType` arg_ty, App fun' arg') args
   where
     (arg_dmd, res_ty) = splitDmdTy fun_ty
@@ -513,17 +513,21 @@ dmdAnalVarApp env dmd fun args
   | Just con <- isDataConWorkId_maybe fun  -- Data constructor
   , isVanillaDataCon con
   , n_val_args == dataConRepArity con      -- Saturated
-  , let cpr_info 
-          | isProductTyCon (dataConTyCon con) = cprProdRes arg_tys
-          | otherwise                         = cprSumRes (dataConTag con)
-        res_ty = foldl bothDmdType (DmdType emptyDmdEnv [] (Converges cpr_info)) arg_tys
-  = pprTrace "dmdAnalVarApp" (vcat [ ppr con, ppr args, ppr n_val_args, ppr cxt_ds
-                                   , ppr arg_tys, ppr (Converges cpr_info), ppr res_ty]) $
+  , let cpr_info = Converges (cprConRes (dataConTag con) arg_tys)
+        res_ty = foldl bothDmdType (DmdType emptyDmdEnv [] cpr_info) arg_tys
+  = -- pprTrace "dmdAnalVarApp" (vcat [ ppr con, ppr args, ppr n_val_args, ppr cxt_ds
+    --                                , ppr arg_tys, ppr cpr_info, ppr res_ty]) $
     ( res_ty 
     , foldl App (Var fun) args')
 
   | otherwise
-  = completeApp env (dmdTransform env fun (mkCallDmdN n_val_args dmd), Var fun) args
+  = --pprTrace "dmdAnalVarApp" (vcat [ ppr fun, ppr args, ppr n_val_args
+    --                               , ppr dmd
+    --                               , ppr (mkCallDmdN n_val_args dmd)
+    --                               , ppr $ dmdTransform env fun (mkCallDmdN n_val_args dmd)
+    --                               , ppr $ completeApp env (dmdTransform env fun (mkCallDmdN n_val_args dmd), Var fun) args
+    --                               ])
+    completeApp env (dmdTransform env fun (mkCallDmdN n_val_args dmd), Var fun) args
   where
     n_val_args = valArgCount args
     cxt_ds = splitProdCleanDmd  n_val_args dmd
@@ -534,13 +538,14 @@ dmdAnalVarApp env dmd fun args
     anal_args :: [Demand] -> [CoreExpr] -> ([DmdType], [CoreExpr])
     anal_args _ [] = ([],[])
     anal_args ds (arg : args)
-      | isTyCoArg arg 
+      | isTypeArg arg 
       , (arg_tys, args') <- anal_args ds args
       = (arg_tys, arg:args')
     anal_args (d:ds) (arg : args)
       | (arg_ty,  arg')  <- dmdAnalArg env d arg
       , (arg_tys, args') <- anal_args ds args
-      = (arg_ty:arg_tys, arg':args')
+      = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_ty, ppr arg' ])
+        (arg_ty:arg_tys, arg':args')
     anal_args ds args = pprPanic "anal_args" (ppr args $$ ppr ds)
 \end{code}
 
