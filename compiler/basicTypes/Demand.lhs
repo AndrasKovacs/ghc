@@ -743,7 +743,7 @@ lubDmdResult :: DmdResult -> DmdResult -> DmdResult
 lubDmdResult Diverges       (Dunno c2)     = Dunno c2
 lubDmdResult Diverges       Diverges       = Diverges
 lubDmdResult Diverges       (Converges c2) = Dunno c2
-lubDmdResult (Converges c1) Diverges       = Converges c1
+lubDmdResult (Converges c1) Diverges       = Dunno c1
 lubDmdResult (Converges c1) (Converges c2) = Converges (c1 `lubCPR` c2)
 lubDmdResult (Converges c1) (Dunno c2)     = Dunno (c1 `lubCPR` c2)
 lubDmdResult (Dunno c1)     Diverges       = Dunno c1
