@@ -17,7 +17,7 @@ import Id               ( Id, idType, mkSysLocal, idDemandInfo, setIdDemandInfo,
 import IdInfo           ( vanillaIdInfo )
 import DataCon
 import Demand
-import MkCore           ( mkRuntimeErrorApp, aBSENT_ERROR_ID )
+import MkCore           ( mkRuntimeErrorApp, aBSENT_ERROR_ID, mkCoreLet )
 import MkId             ( voidArgId, voidPrimId )
 import TysPrim          ( voidPrimTy )
 import TysWiredIn       ( tupleCon )
@@ -131,7 +131,7 @@ mkWwBodies dflags fun_ty demands res_info one_shots
         ; (work_args, wrap_fn_str,  work_fn_str) <- mkWWstr dflags wrap_args
 
         -- Do CPR w/w.  See Note [Always do CPR w/w]
-        ; (wrap_fn_cpr, work_fn_cpr,  cpr_res_ty) <- mkWWcpr False res_ty res_info
+        ; (wrap_fn_cpr, work_fn_cpr,  cpr_res_ty) <- mkWWcpr res_ty res_info
 
         ; let (work_lam_args, work_call_args) = mkWorkerArgs dflags work_args all_one_shots cpr_res_ty
         ; return ([idDemandInfo v | v <- work_call_args, isId v],
@@ -528,63 +528,68 @@ left-to-right traversal of the result structure.
 
 
 \begin{code}
-mkWWcpr :: Bool                              -- is this a nested return?
-        -> Type                              -- function body type
+
+mkWWcpr :: Type                              -- function body type
         -> DmdResult                         -- CPR analysis results
         -> UniqSM (CoreExpr -> CoreExpr,             -- New wrapper
                    CoreExpr -> CoreExpr,             -- New worker
                    Type)                        -- Type of worker's body
+mkWWcpr body_ty res
+  = do (arg_vars, con_app, decon) <- mkWWcpr_help False body_ty res
+       wrap_wild_uniq <- getUniqueM
 
-mkWWcpr inner body_ty res
-  = case returnsCPR_maybe inner res of
-       Nothing 
-            -> return (id, id, body_ty)  -- No CPR info
-       Just (con_tag, rs)
-            | Just stuff <- deepSplitCprType_maybe con_tag body_ty
-            -> mkWWcpr_help stuff rs
+       let wrap_wild = mk_ww_local wrap_wild_uniq ubx_tup_ty
+           ubx_tup_con  = tupleCon UnboxedTuple (length arg_vars)
+           ubx_tup_app  = mkConApp2 ubx_tup_con (map idType arg_vars) arg_vars
+           ubx_tup_ty   = exprType ubx_tup_app
+
+       return ( \ wkr_call -> Case wkr_call wrap_wild (exprType con_app)  [(DataAlt ubx_tup_con, arg_vars, con_app)]
+              , \ body     -> decon body ubx_tup_app
+              , ubx_tup_ty )
+
+mkWWcpr_help :: Bool ->  -- This this an inner call?
+                Type ->
+                DmdResult ->
+                UniqSM ( [Var],    -- variables for the arguments
+                         CoreExpr, -- boxed constructors applied to all these variables
+                         CoreExpr -> CoreExpr -> CoreExpr)
+                                   -- nested case expression, taking the boxed constructors in the first
+                                   -- argument apart, binds them to the variables above and feeds them
+                                   -- to the second argument
+mkWWcpr_help inner ty res
+    = case returnsCPR_maybe inner res of
+        Just (con_tag, rs)
+            | Just (data_con, inst_tys, arg_tys, co) <- deepSplitCprType_maybe con_tag ty
+            -> do arg_uniqs <- getUniquesM
+                  let arg_vars = zipWith mk_ww_local arg_uniqs arg_tys
+                  arg_stuff <- sequence (zipWith (mkWWcpr_help True) arg_tys rs)
+
+                  let (nested_arg_varss, arg_cons, arg_decons) = unzip3 arg_stuff
+                      nested_arg_vars = concat nested_arg_varss
+                      nested_decon = foldr (.) id $ zipWith id arg_decons (map Var arg_vars)
+
+                  work_uniq <- getUniqueM
+
+                  return
+                    ( nested_arg_vars
+                    , mkConApp data_con (map Type inst_tys ++ arg_cons) `mkCast` mkSymCo co
+                    , \e body -> mkUnpackCase e co work_uniq data_con arg_vars (nested_decon body)
+                    )
             |  otherwise
-            -> WARN( True, text "mkWWcpr: non-algebraic or open body type" <+> ppr body_ty )
-               return (id, id, body_ty)
+            -> pprPanic "mkWWcpr: non-algebraic or open body type" (ppr ty)
+        Nothing -> do
+           uniq <- getUniqueM
+           let var = mk_ww_local uniq ty
+           return ( [var]
+                  , Var var
+                  , \e body -> mkRename e var body
+                  )
 
-mkWWcpr_help :: (DataCon, [Type], [Type], Coercion) -> [DmdResult]
-             -> UniqSM (CoreExpr -> CoreExpr, CoreExpr -> CoreExpr, Type)
-
-mkWWcpr_help (data_con, inst_tys, arg_tys, co) rs
-  | [arg_ty1] <- arg_tys
-  , isUnLiftedType arg_ty1
-        -- Special case when there is a single result of unlifted type
-        --
-        -- Wrapper:     case (..call worker..) of x -> C x
-        -- Worker:      case (   ..body..    ) of C x -> x
-  = do { (work_uniq : arg_uniq : _) <- getUniquesM
-       ; let arg       = mk_ww_local arg_uniq  arg_ty1
-             con_app   = mkConApp2 data_con inst_tys [arg] `mkCast` mkSymCo co
-
-       ; return ( \ wkr_call -> Case wkr_call arg (exprType con_app) [(DEFAULT, [], con_app)]
-                , \ body     -> mkUnpackCase body co work_uniq data_con [arg] (Var arg)
-                , arg_ty1 ) }
-
-  | otherwise   -- The general case
-        -- Wrapper: case (..call worker..) of (# a, b #) -> C a b
-        -- Worker:  case (   ...body...  ) of C a b -> (# a, b #)
-  = do { work_uniq <- getUniqueM
-       ; bx_uniqs <- getUniquesM
-       ; ubx_uniqs <- getUniquesM
-       ; arg_stuff <- sequence (zipWith (mkWWcpr True) arg_tys rs)
-       ; let (arg_wraps, arg_works, ubx_arg_tys) = unzip3 arg_stuff
-             (bx_args) = zipWith mk_ww_local bx_uniqs arg_tys
-             (wrap_wild : ubx_args) = zipWith mk_ww_local ubx_uniqs (ubx_tup_ty : ubx_arg_tys)
-             ubx_tup_con  = tupleCon UnboxedTuple (length arg_tys)
-             ubx_tup_ty   = exprType ubx_tup_app
-             ubx_tup_app  = mkConApp2 ubx_tup_con ubx_arg_tys [] `mkApps`
-                                zipWith id arg_works (map varToCoreExpr bx_args)
-             con_app      = (mkConApp2 data_con inst_tys [] `mkApps`
-                                zipWith id arg_wraps (map varToCoreExpr ubx_args)
-                            ) `mkCast` mkSymCo co
-
-       ; return ( \ wkr_call -> Case wkr_call wrap_wild (exprType con_app)  [(DataAlt ubx_tup_con, ubx_args, con_app)]
-                , \ body     -> mkUnpackCase body co work_uniq data_con bx_args ubx_tup_app
-                , ubx_tup_ty ) }
+-- mkRename e v body
+-- binds v to e in body. This will later be removed by the simplifiers
+mkRename :: CoreExpr -> Var -> CoreExpr -> CoreExpr
+mkRename e v body = ASSERT( idType v `eqType` exprType e) 
+                    mkCoreLet (NonRec v e) body
 
 mkUnpackCase ::  CoreExpr -> Coercion -> Unique -> DataCon -> [Id] -> CoreExpr -> CoreExpr
 -- (mkUnpackCase e co uniq Con args body)
