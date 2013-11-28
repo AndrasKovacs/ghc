@@ -536,16 +536,24 @@ mkWWcpr :: Type                              -- function body type
                    Type)                        -- Type of worker's body
 mkWWcpr body_ty res
   = do (arg_vars, con_app, decon) <- mkWWcpr_help False body_ty res
-       wrap_wild_uniq <- getUniqueM
+       case arg_vars of
+         -- When we have to wrap only on argument, skip the (# .. #)
+         [arg_var] -> do
+           return ( \ wkr_call -> mkRename wkr_call arg_var con_app
+                  , \ body     -> decon body (Var arg_var)
+                  , idType arg_var )
 
-       let wrap_wild = mk_ww_local wrap_wild_uniq ubx_tup_ty
-           ubx_tup_con  = tupleCon UnboxedTuple (length arg_vars)
-           ubx_tup_app  = mkConApp2 ubx_tup_con (map idType arg_vars) arg_vars
-           ubx_tup_ty   = exprType ubx_tup_app
+         _ -> do
+           wrap_wild_uniq <- getUniqueM
 
-       return ( \ wkr_call -> Case wkr_call wrap_wild (exprType con_app)  [(DataAlt ubx_tup_con, arg_vars, con_app)]
-              , \ body     -> decon body ubx_tup_app
-              , ubx_tup_ty )
+           let wrap_wild = mk_ww_local wrap_wild_uniq ubx_tup_ty
+               ubx_tup_con  = tupleCon UnboxedTuple (length arg_vars)
+               ubx_tup_app  = mkConApp2 ubx_tup_con (map idType arg_vars) arg_vars
+               ubx_tup_ty   = exprType ubx_tup_app
+
+           return ( \ wkr_call -> Case wkr_call wrap_wild (exprType con_app)  [(DataAlt ubx_tup_con, arg_vars, con_app)]
+                  , \ body     -> decon body ubx_tup_app
+                  , ubx_tup_ty )
 
 mkWWcpr_help :: Bool ->  -- This this an inner call?
                 Type ->
