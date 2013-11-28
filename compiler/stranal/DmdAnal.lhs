@@ -115,7 +115,9 @@ dmdAnalStar :: AnalEnv
 dmdAnalStar env dmd e 
   | (cd, defer_and_use) <- toCleanDmd dmd
   , (dmd_ty, e')        <- dmdAnal env cd e
-  = (postProcessDmdTypeM defer_and_use dmd_ty, e')
+  = let dmd_ty' = postProcessDmdTypeM defer_and_use dmd_ty
+    in -- pprTrace "dmdAnalStar" (vcat [ppr e, ppr dmd, ppr defer_and_use, ppr dmd_ty, ppr dmd_ty'])
+       (dmd_ty', e')
 
 -- Main Demand Analsysis machinery
 dmdAnal :: AnalEnv
@@ -639,7 +641,8 @@ dmdAnalRhs top_lvl rec_flag env id rhs
   = (fn_str, emptyDmdEnv, set_idStrictness env id fn_str, rhs)
 
   | otherwise
-  = (sig_ty, lazy_fv, id', mkLams bndrs' body')
+  = -- pprTrace "dmdAnalRhs" (vcat [ ppr id, ppr (idDemandInfo id), ppr rhs_dmd_ty, ppr sig_ty, ppr not_strict ])
+    (sig_ty, lazy_fv, id', mkLams bndrs' body')
   where
     (bndrs, body)        = collectBinders rhs
     env_body             = foldl extendSigsWithLam env bndrs
