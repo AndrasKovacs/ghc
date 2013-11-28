@@ -307,9 +307,11 @@ dmdAnalAlt env dmd (con,bndrs,rhs)
 	(rhs_ty, rhs')   = dmdAnal env dmd rhs
         rhs_ty'          = addDataConPatDmds con bndrs rhs_ty
 	(alt_ty, bndrs') = annotateBndrs env rhs_ty' bndrs
-	final_alt_ty | io_hack_reqd = alt_ty `lubDmdType` topDmdType
+	final_alt_ty | io_hack_reqd = dmdTypeArgTop alt_ty
 		     | otherwise    = alt_ty
 
+        -- Note [IO State Hack]
+        --
 	-- There's a hack here for I/O operations.  Consider
 	-- 	case foo x s of { (# s, r #) -> y }
 	-- Is this strict in 'y'.  Normally yes, but what if 'foo' is an I/O

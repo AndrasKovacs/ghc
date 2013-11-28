@@ -20,6 +20,7 @@ module Demand (
 
         DmdType(..), dmdTypeDepth, lubDmdType, bothDmdEnv, bothDmdType, bothDmdTypeCase,
         topDmdType, botDmdType, mkDmdType, mkTopDmdType, 
+        dmdTypeArgTop,
 
         DmdEnv, emptyDmdEnv,
 
@@ -1140,6 +1141,13 @@ splitDmdTy :: DmdType -> (Demand, DmdType)
 -- free vars, so no need to add more!
 splitDmdTy (DmdType fv (dmd:dmds) res_ty) = (dmd, DmdType fv dmds res_ty)
 splitDmdTy ty@(DmdType _ [] res_ty)       = (resTypeArgDmd res_ty, ty)
+
+-- We want to forget what we know about the arguments, but keep the information
+-- of the result, see Note [IO State Hack]
+dmdTypeArgTop :: DmdType -> DmdType
+dmdTypeArgTop d@(DmdType _ _ res)
+  = let (DmdType env' ds' _) = d `lubDmdType` topDmdType
+    in   DmdType env' ds' res
 
 modifyEnv :: Bool                       -- No-op if False
           -> (Demand -> Demand)         -- The zapper
