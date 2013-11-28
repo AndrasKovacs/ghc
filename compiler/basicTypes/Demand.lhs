@@ -28,7 +28,7 @@ module Demand (
         isBotRes, isTopRes, resTypeArgDmd, 
         topRes, botRes, cprConRes, vanillaCprConRes,
         appIsBottom, isBottomingSig, pprIfaceStrictSig, 
-        trimCPRInfo, returnsCPR, returnsCPR_maybe,
+        returnsCPR, returnsCPR_maybe,
         StrictSig(..), mkStrictSig, topSig, botSig, cprProdSig,
         isTopSig, splitStrictSig, increaseStrictSigArity,
         sigMayConverge,
@@ -830,20 +830,6 @@ isTopRes _             = False
 isBotRes :: DmdResult -> Bool
 isBotRes Diverges = True
 isBotRes _        = False
-
--- TODO: This currently ignores trim_sums. Evaluate if still required, and fix
--- Note [CPR for sum types]
-trimCPRInfo :: Bool -> Bool -> DmdResult -> DmdResult
-trimCPRInfo trim_all _trim_sums res
-  = trimR res
-  where
-    trimR (Converges c) = Converges (trimC c)
-    trimR (Dunno c)     = Dunno (trimC c)
-    trimR Diverges      = Diverges
-
-    trimC (RetCon n rs) | trim_all = NoCPR
-                        | otherwise             = RetCon n (map trimR rs)
-    trimC NoCPR = NoCPR
 
 returnsCPR :: DmdResult -> Bool
 returnsCPR dr = isJust (returnsCPR_maybe False dr)
