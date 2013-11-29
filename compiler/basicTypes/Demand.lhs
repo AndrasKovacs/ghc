@@ -29,6 +29,7 @@ module Demand (
         topRes, botRes, cprConRes, vanillaCprConRes,
         appIsBottom, isBottomingSig, pprIfaceStrictSig, 
         returnsCPR, returnsCPR_maybe,
+        forgetCPR,
         StrictSig(..), mkStrictSig, topSig, botSig, cprProdSig,
         isTopSig, splitStrictSig, increaseStrictSigArity,
         sigMayConverge,
@@ -808,6 +809,13 @@ cutCPRResult n (RetCon tag rs) = RetCon tag (map (cutDmdResult (n-1)) rs)
 -- Forget that something might converge for sure
 divergeDmdResult :: DmdResult -> DmdResult
 divergeDmdResult r = r `lubDmdResult` botRes
+
+-- Forget the CPR information, but remember if it converges or diverges
+-- Used for non-strict thunks
+forgetCPR :: DmdResult -> DmdResult
+forgetCPR Diverges = Diverges
+forgetCPR (Converges _) = Converges NoCPR
+forgetCPR (Dunno _) = Dunno NoCPR
 
 cprConRes :: ConTag -> [DmdType] -> CPRResult
 cprConRes tag arg_tys
