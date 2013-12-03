@@ -90,7 +90,7 @@ import TcEvidence
 import Type
 import Class    ( Class )
 import TyCon    ( TyCon )
-import DataCon  ( DataCon, dataConUserType )
+import DataCon  ( DataCon, dataConUserType, dataConOrigArgTys )
 import TcType
 import Annotations
 import InstEnv
@@ -1571,9 +1571,9 @@ Note [Preventing recursive dictionaries]
 
 We have some classes where it is not very useful to build recursive
 dictionaries (Coercible, at the moment). So we need the constraint solver to
-prevent that. We conservativey ensure this property using the subgoal depth of
+prevent that. We conservatively ensure this property using the subgoal depth of
 the constraints: When solving a Coercible constraint at depth d, we do not
-consider evicence from a depth <= d as suitable.
+consider evidence from a depth <= d as suitable.
 
 Therefore we need to record the minimum depth allowed to solve a CtWanted. This
 is done in the SubGoalDepth field of CtWanted. Most code now uses mkCtWanted,
@@ -1779,6 +1779,8 @@ data CtOrigin
 
   | ScOrigin            -- Typechecking superclasses of an instance declaration
   | DerivOrigin         -- Typechecking deriving
+  | DerivOriginDC DataCon Int
+                        -- Checking constraings arising from this data an and field index
   | StandAloneDerivOrigin -- Typechecking stand-alone deriving
   | DefaultOrigin       -- Typechecking a default decl
   | DoOrigin            -- Arising from a do expression
@@ -1816,6 +1818,10 @@ pprO TupleOrigin           = ptext (sLit "a tuple")
 pprO NegateOrigin          = ptext (sLit "a use of syntactic negation")
 pprO ScOrigin              = ptext (sLit "the superclasses of an instance declaration")
 pprO DerivOrigin           = ptext (sLit "the 'deriving' clause of a data type declaration")
+pprO (DerivOriginDC dc n)  = hsep [ ptext (sLit "the"), speakNth n,
+                                    ptext (sLit "field of"), quotes (ppr dc),
+                                    parens (ptext (sLit "type") <+> quotes (ppr ty)) ]
+    where ty = dataConOrigArgTys dc !! (n-1)
 pprO StandAloneDerivOrigin = ptext (sLit "a 'deriving' declaration")
 pprO DefaultOrigin         = ptext (sLit "a 'default' declaration")
 pprO DoOrigin              = ptext (sLit "a do statement")

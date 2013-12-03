@@ -415,7 +415,11 @@ toHsType ty
 
     to_hs_type (TyVarTy tv) = nlHsTyVar (getRdrName tv)
     to_hs_type (AppTy t1 t2) = nlHsAppTy (toHsType t1) (toHsType t2)
-    to_hs_type (TyConApp tc args) = nlHsTyConApp (getRdrName tc) (map toHsType args)
+    to_hs_type (TyConApp tc args) = nlHsTyConApp (getRdrName tc) (map toHsType args')
+       where 
+         args' = filterOut isKind args
+         -- Source-language types have _implicit_ kind arguments,
+         -- so we must remove them here (Trac #8563)
     to_hs_type (FunTy arg res) = ASSERT( not (isConstraintKind (typeKind arg)) )
                                  nlHsFunTy (toHsType arg) (toHsType res)
     to_hs_type t@(ForAllTy {}) = pprPanic "toHsType" (ppr t)
@@ -439,12 +443,10 @@ mkHsWrap co_fn e | isIdHsWrapper co_fn = e
 		 | otherwise	       = HsWrap co_fn e
 
 mkHsWrapCo :: TcCoercion -> HsExpr id -> HsExpr id
-mkHsWrapCo co e | isTcReflCo co = e
-                | otherwise     = mkHsWrap (WpCast co) e
+mkHsWrapCo co e = mkHsWrap (coToHsWrapper co) e
 
 mkLHsWrapCo :: TcCoercion -> LHsExpr id -> LHsExpr id
-mkLHsWrapCo co (L loc e) | isTcReflCo co = L loc e
-                         | otherwise     = L loc (mkHsWrap (WpCast co) e)
+mkLHsWrapCo co (L loc e) = L loc (mkHsWrapCo co e)
 
 mkHsCmdCast :: TcCoercion -> HsCmd id -> HsCmd id
 mkHsCmdCast co cmd | isTcReflCo co = cmd
@@ -452,7 +454,7 @@ mkHsCmdCast co cmd | isTcReflCo co = cmd
 
 coToHsWrapper :: TcCoercion -> HsWrapper
 coToHsWrapper co | isTcReflCo co = idHsWrapper
-                 | otherwise     = WpCast co
+                 | otherwise     = mkWpCast (mkTcSubCo co)
 
 mkHsWrapPat :: HsWrapper -> Pat id -> Type -> Pat id
 mkHsWrapPat co_fn p ty | isIdHsWrapper co_fn = p
@@ -460,7 +462,7 @@ mkHsWrapPat co_fn p ty | isIdHsWrapper co_fn = p
 
 mkHsWrapPatCo :: TcCoercion -> Pat id -> Type -> Pat id
 mkHsWrapPatCo co pat ty | isTcReflCo co = pat
-                        | otherwise     = CoPat (WpCast co) pat ty
+                        | otherwise     = CoPat (mkWpCast co) pat ty
 
 mkHsDictLet :: TcEvBinds -> LHsExpr Id -> LHsExpr Id
 mkHsDictLet ev_binds expr = mkLHsWrap (mkWpLet ev_binds) expr

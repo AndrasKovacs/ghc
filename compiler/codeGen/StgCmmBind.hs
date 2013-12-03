@@ -31,7 +31,6 @@ import StgCmmForeign    (emitPrimCall)
 import MkGraph
 import CoreSyn          ( AltCon(..) )
 import SMRep
-import BlockId
 import Cmm
 import CmmInfo
 import CmmUtils
@@ -477,13 +476,12 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                 ; dflags <- getDynFlags
                 ; let node_points = nodeMustPointToIt dflags lf_info
                       node' = if node_points then Just node else Nothing
-                ; when node_points (ldvEnterClosure cl_info)
                 -- Emit new label that might potentially be a header
                 -- of a self-recursive tail call. See Note
                 -- [Self-recursive tail calls] in StgCmmExpr
-                ; u <- newUnique
-                ; let loop_header_id = mkBlockId u
+                ; loop_header_id <- newLabelC
                 ; emitLabel loop_header_id
+                ; when node_points (ldvEnterClosure cl_info (CmmLocal node))
                 -- Extend reader monad with information that
                 -- self-recursive tail calls can be optimized into local
                 -- jumps
@@ -495,7 +493,7 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                   tickyEnterFun cl_info
                 ; enterCostCentreFun cc
                     (CmmMachOp (mo_wordSub dflags)
-                         [ CmmReg nodeReg
+                         [ CmmReg (CmmLocal node) -- See [NodeReg clobbered with loopification]
                          , mkIntExpr dflags (funTag dflags cl_info) ])
                 ; fv_bindings <- mapM bind_fv fv_details
                 -- Load free vars out of closure *after*
@@ -505,6 +503,18 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                 }}}
 
   }
+
+-- Note [NodeReg clobbered with loopification]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Previously we used to pass nodeReg (aka R1) here. With profiling, upon
+-- entering a closure, enterFunCCS was called with R1 passed to it. But since R1
+-- may get clobbered inside the body of a closure, and since a self-recursive
+-- tail call does not restore R1, a subsequent call to enterFunCCS received a
+-- possibly bogus value from R1. The solution is to not pass nodeReg (aka R1) to
+-- enterFunCCS. Instead, we pass node, the callee-saved temporary that stores
+-- the original value of R1. This way R1 may get modified but loopification will
+-- not care.
 
 -- A function closure pointer may be tagged, so we
 -- must take it into account when accessing the free variables.
@@ -551,7 +561,7 @@ thunkCode cl_info fv_details _cc node arity body
   = do { dflags <- getDynFlags
        ; let node_points = nodeMustPointToIt dflags (closureLFInfo cl_info)
              node'       = if node_points then Just node else Nothing
-        ; ldvEnterClosure cl_info -- NB: Node always points when profiling
+        ; ldvEnterClosure cl_info (CmmLocal node) -- NB: Node always points when profiling
 
         -- Heap overflow check
         ; entryHeapCheck cl_info node' arity [] $ do
@@ -782,4 +792,3 @@ closureDescription dflags mod_name name
                       else pprModule mod_name <> char '.' <> ppr name) <>
                     char '>')
    -- showSDocDump, because we want to see the unique on the Name.
-
