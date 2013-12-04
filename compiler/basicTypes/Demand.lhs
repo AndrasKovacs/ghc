@@ -723,15 +723,15 @@ We have lubs, but not glbs; but that is ok.
 -- Constructed Product Result                                             
 ------------------------------------------------------------------------
 
-data CPRResult = NoCPR                      -- Top of the lattice
-               | RetCon ConTag [DmdResult]  -- Returns a constructor from a data type
-               deriving( Eq, Show )
-
 data DmdResult = Diverges              -- Definitely diverges
                | Converges CPRResult   -- Definitely converges 
                | Dunno CPRResult       -- Might diverge or converge, but in the latter case the
                                        -- result shape is described by CPRResult
                deriving( Eq, Show ) 
+
+data CPRResult = NoCPR                      -- Top of the lattice
+               | RetCon ConTag [DmdResult]  -- Returns a constructor from a data type
+               deriving( Eq, Show )
 
 lubCPR :: CPRResult -> CPRResult -> CPRResult
 lubCPR (RetCon ct1 ds1) (RetCon ct2 ds2) 

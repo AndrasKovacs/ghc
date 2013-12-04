@@ -521,36 +521,39 @@ dmdAnalVarApp env dmd fun args
         res_ty = foldl bothDmdType (DmdType emptyDmdEnv [] cpr_info) arg_tys
   = -- pprTrace "dmdAnalVarApp" (vcat [ ppr con, ppr args, ppr n_val_args, ppr cxt_ds
     --                                , ppr arg_tys, ppr cpr_info, ppr res_ty]) $
-    ( res_ty 
+    ( res_ty
     , foldl App (Var fun) args')
+  where
+    n_val_args = valArgCount args
+    cxt_ds = splitProdCleanDmd n_val_args dmd
+    (arg_tys, args') = anal_con_args cxt_ds args
+        -- The constructor itself is lazy, so we don't need to look at the
+        -- strictness signature on the data constructor. Instead just
+        -- propagate demand from the context into the constructor arguments
+        -- See Note [Data-con worker strictness] in MkId
 
-  | otherwise
+    anal_con_args :: [Demand] -> [CoreExpr] -> ([DmdType], [CoreExpr])
+    anal_con_args _ [] = ([],[])
+    anal_con_args ds (arg : args)
+      | isTypeArg arg
+      , (arg_tys, args') <- anal_con_args ds args
+      = (arg_tys, arg:args')
+    anal_con_args (d:ds) (arg : args)
+      | (arg_ty,  arg')  <- dmdAnalArg env d arg
+      , (arg_tys, args') <- anal_con_args ds args
+      = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_ty, ppr arg' ])
+        (arg_ty:arg_tys, arg':args')
+    anal_con_args ds args = pprPanic "anal_con_args" (ppr args $$ ppr ds)
+
+
+dmdAnalVarApp env dmd fun args
+  | otherwise  -- Not a saturated constructor
   = --pprTrace "dmdAnalVarApp" (vcat [ ppr fun, ppr args, ppr n_val_args
     --                               , ppr dmd
-    --                               , ppr (mkCallDmdN n_val_args dmd)
     --                               , ppr $ dmdTransform env fun (mkCallDmdN n_val_args dmd)
     --                               , ppr $ completeApp env (dmdTransform env fun (mkCallDmdN n_val_args dmd), Var fun) args
     --                               ])
-    completeApp env (dmdTransform env fun (mkCallDmdN n_val_args dmd), Var fun) args
-  where
-    n_val_args = valArgCount args
-    cxt_ds = splitProdCleanDmd  n_val_args dmd
-    (arg_tys, args') = anal_args cxt_ds args
-        -- The constructor itself is lazy
-        -- See Note [Data-con worker strictness] in MkId
-  
-    anal_args :: [Demand] -> [CoreExpr] -> ([DmdType], [CoreExpr])
-    anal_args _ [] = ([],[])
-    anal_args ds (arg : args)
-      | isTypeArg arg 
-      , (arg_tys, args') <- anal_args ds args
-      = (arg_tys, arg:args')
-    anal_args (d:ds) (arg : args)
-      | (arg_ty,  arg')  <- dmdAnalArg env d arg
-      , (arg_tys, args') <- anal_args ds args
-      = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_ty, ppr arg' ])
-        (arg_ty:arg_tys, arg':args')
-    anal_args ds args = pprPanic "anal_args" (ppr args $$ ppr ds)
+    completeApp env (dmdTransform env fun (mkCallDmdN (valArgCount args) dmd), Var fun) args
 \end{code}
 
 %************************************************************************
