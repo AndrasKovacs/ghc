@@ -522,7 +522,8 @@ dmdAnalVarApp env dmd fun args
   , isVanillaDataCon con
   , n_val_args == dataConRepArity con      -- Saturated
   , let cpr_info = Converges (cprConRes (dataConTag con) arg_rets)
-        res_ty = foldl bothDmdType (DmdType emptyDmdEnv [] cpr_info) arg_tys
+        fv_env = foldl bothDmdEnv emptyDmdEnv arg_envs
+        res_ty = DmdType fv_env [] cpr_info
   = -- pprTrace "dmdAnalVarApp" (vcat [ ppr con, ppr args, ppr n_val_args, ppr cxt_ds
     --                                , ppr arg_tys, ppr cpr_info, ppr res_ty]) $
     ( res_ty 
@@ -539,21 +540,21 @@ dmdAnalVarApp env dmd fun args
   where
     n_val_args = valArgCount args
     cxt_ds = splitProdCleanDmd  n_val_args dmd
-    (arg_tys, arg_rets, args') = anal_args cxt_ds args
+    (arg_envs, arg_rets, args') = anal_args cxt_ds args
         -- The constructor itself is lazy
         -- See Note [Data-con worker strictness] in MkId
   
-    anal_args :: [Demand] -> [CoreExpr] -> ([DmdType], [DmdResult], [CoreExpr])
+    anal_args :: [Demand] -> [CoreExpr] -> ([DmdEnv], [DmdResult], [CoreExpr])
     anal_args _ [] = ([],[],[])
     anal_args ds (arg : args)
       | isTypeArg arg 
-      , (arg_tys, arg_rets, args') <- anal_args ds args
-      = (arg_tys, arg_rets, arg:args')
+      , (arg_envs, arg_rets, args') <- anal_args ds args
+      = (arg_envs, arg_rets, arg:args')
     anal_args (d:ds) (arg : args)
       | (arg_ty, arg_ret, arg')  <- dmdAnalArg env d arg
-      , (arg_tys, arg_rets, args') <- anal_args ds args
-      = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_ty, ppr arg' ])
-        (arg_ty:arg_tys, arg_ret:arg_rets, arg':args')
+      , (arg_envs, arg_rets, args') <- anal_args ds args
+      = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_env, ppr arg' ])
+        (getDmdEnv arg_ty:arg_envs, arg_ret:arg_rets, arg':args')
     anal_args ds args = pprPanic "anal_args" (ppr args $$ ppr ds)
 \end{code}
 

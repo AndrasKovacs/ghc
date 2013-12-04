@@ -22,7 +22,7 @@ module Demand (
         topDmdType, botDmdType, mkDmdType, mkTopDmdType, 
         dmdTypeArgTop, addDemand,
 
-        DmdEnv, emptyDmdEnv,
+        DmdEnv, emptyDmdEnv, getDmdEnv,
         peelFV,
 
         DmdResult(..), CPRResult(..),
@@ -1110,6 +1110,9 @@ instance Outputable DmdType where
 
 emptyDmdEnv :: VarEnv Demand
 emptyDmdEnv = emptyVarEnv
+
+getDmdEnv :: DmdType -> DmdEnv
+getDmdEnv (DmdType e _ _) = e       -- Only for data-typed arguments!
 
 topDmdType, botDmdType :: DmdType
 topDmdType = DmdType emptyDmdEnv [] topRes
