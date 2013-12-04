@@ -791,20 +791,29 @@ botRes = Diverges
 maxCPRDepth :: Int
 maxCPRDepth = 3
 
+-- This is the depth we use with -fnested-cpr-off, in order
+-- to get precisely the same behaviour as before introduction of nested cpr
+-- -fnested-cpr-off can eventually be removed if nested cpr is deemd to be
+-- a good thing always.
+flatCPRDepth :: Int
+flatCPRDepth = 1
+
 -- With nested CPR, DmdResult can be arbitrarily deep; consider e.g. the
 -- DmdResult of repeat
--- 
+--
 -- So we need to forget information at a certain depth. We do that at all points
 -- where we are building RetCon constructors.
-cutDmdResult :: Int -> DmdResult -> DmdResult
-cutDmdResult 0 _ = topRes
-cutDmdResult _ Diverges = Diverges
-cutDmdResult n (Converges c) = Converges (cutCPRResult n c)
-cutDmdResult n (Dunno c) = Dunno (cutCPRResult n c)
-
 cutCPRResult :: Int -> CPRResult -> CPRResult
-cutCPRResult _ NoCPR = NoCPR
+cutCPRResult 0 _               = NoCPR
+cutCPRResult _ NoCPR           = NoCPR
 cutCPRResult n (RetCon tag rs) = RetCon tag (map (cutDmdResult (n-1)) rs)
+  where
+    cutDmdResult :: Int -> DmdResult -> DmdResult
+    cutDmdResult 0 _             = topRes
+    cutDmdResult _ Diverges      = Diverges
+    cutDmdResult n (Converges c) = Converges (cutCPRResult n c)
+    cutDmdResult n (Dunno c)     = Dunno     (cutCPRResult n c)
+
 
 -- Forget that something might converge for sure
 divergeDmdResult :: DmdResult -> DmdResult
@@ -819,8 +828,9 @@ forgetCPR (Dunno _) = Dunno NoCPR
 
 cprConRes :: ConTag -> [DmdType] -> CPRResult
 cprConRes tag arg_tys
-  | opt_CprOff = NoCPR
-  | otherwise  = cutCPRResult maxCPRDepth $ RetCon tag (map get_res arg_tys)
+  | opt_CprOff       = NoCPR
+  | opt_NestedCprOff = cutCPRResult flatCPRDepth $ RetCon tag (map get_res arg_tys)
+  | otherwise        = cutCPRResult maxCPRDepth  $ RetCon tag (map get_res arg_tys)
   where
     get_res :: DmdType -> DmdResult
     get_res (DmdType _ [] r) = r       -- Only for data-typed arguments!
