@@ -17,7 +17,7 @@ import Id               ( Id, idType, mkSysLocal, idDemandInfo, setIdDemandInfo,
 import IdInfo           ( vanillaIdInfo )
 import DataCon
 import Demand
-import MkCore           ( mkRuntimeErrorApp, aBSENT_ERROR_ID, mkCoreLet )
+import MkCore           ( mkRuntimeErrorApp, aBSENT_ERROR_ID, mkCoreLet, mkWildCase )
 import MkId             ( voidArgId, voidPrimId )
 import TysPrim          ( voidPrimTy )
 import TysWiredIn       ( tupleCon )
@@ -448,11 +448,10 @@ mkWWstr_one dflags arg
              <- deepSplitProductType_maybe (idType arg)
   , cs `equalLength` inst_con_arg_tys
       -- See Note [mkWWstr and unsafeCore]
-  =  do { (uniq1:uniqs) <- getUniquesM
+  =  do { uniqs <- getUniquesM
         ; let   unpk_args      = zipWith mk_ww_local uniqs inst_con_arg_tys
                 unpk_args_w_ds = zipWithEqual "mkWWstr" set_worker_arg_info unpk_args cs
-                unbox_fn       = mkUnpackCase (Var arg) co uniq1
-                                              data_con unpk_args
+                unbox_fn       = mkUnpackCase (Var arg) co data_con unpk_args
                 rebox_fn       = Let (NonRec arg con_app)
                 con_app        = mkConApp2 data_con inst_tys unpk_args `mkCast` mkSymCo co
          ; (worker_args, wrap_fn, work_fn) <- mkWWstr dflags unpk_args_w_ds
@@ -576,12 +575,10 @@ mkWWcpr_help inner ty res
                       nested_arg_vars = concat nested_arg_varss
                       nested_decon = foldr (.) id $ zipWith id arg_decons (map Var arg_vars)
 
-                  work_uniq <- getUniqueM
-
                   return
                     ( nested_arg_vars
                     , mkConApp data_con (map Type inst_tys ++ arg_cons) `mkCast` mkSymCo co
-                    , \e body -> mkUnpackCase e co work_uniq data_con arg_vars (nested_decon body)
+                    , \e body -> mkUnpackCase e co data_con arg_vars (nested_decon body)
                     )
             |  otherwise
             -> -- I would be happier if this were a error, but there are nasty corner cases.
@@ -602,19 +599,18 @@ mkRename :: CoreExpr -> Var -> CoreExpr -> CoreExpr
 mkRename e v body = ASSERT( idType v `eqType` exprType e) 
                     mkCoreLet (NonRec v e) body
 
-mkUnpackCase ::  CoreExpr -> Coercion -> Unique -> DataCon -> [Id] -> CoreExpr -> CoreExpr
--- (mkUnpackCase e co uniq Con args body)
+mkUnpackCase ::  CoreExpr -> Coercion -> DataCon -> [Id] -> CoreExpr -> CoreExpr
+-- (mkUnpackCase e co Con args body)
 --      returns
--- case e |> co of bndr { Con args -> body }
+-- case e |> co of _ { Con args -> body }
 
-mkUnpackCase (Tick tickish e) co uniq con args body   -- See Note [Profiling and unpacking]
-  = Tick tickish (mkUnpackCase e co uniq con args body)
-mkUnpackCase scrut co uniq boxing_con unpk_args body
-  = Case casted_scrut bndr (exprType body)
+mkUnpackCase (Tick tickish e) co con args body   -- See Note [Profiling and unpacking]
+  = Tick tickish (mkUnpackCase e co con args body)
+mkUnpackCase scrut co boxing_con unpk_args body
+  = mkWildCase casted_scrut (exprType casted_scrut) (exprType body)
          [(DataAlt boxing_con, unpk_args, body)]
   where
     casted_scrut = scrut `mkCast` co
-    bndr = mk_ww_local uniq (exprType casted_scrut)
 \end{code}
 
 Note [Profiling and unpacking]
