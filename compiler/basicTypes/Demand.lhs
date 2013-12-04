@@ -26,7 +26,7 @@ module Demand (
         peelFV,
 
         DmdResult(..), CPRResult(..),
-        isBotRes, isTopRes, resTypeArgDmd, 
+        isBotRes, isTopRes, getDmdResult, resTypeArgDmd,
         topRes, botRes, cprConRes, vanillaCprConRes,
         appIsBottom, isBottomingSig, pprIfaceStrictSig, 
         returnsCPR, returnsCPR_maybe,
@@ -828,15 +828,15 @@ forgetCPR Diverges = Diverges
 forgetCPR (Converges _) = Converges NoCPR
 forgetCPR (Dunno _) = Dunno NoCPR
 
-cprConRes :: ConTag -> [DmdType] -> CPRResult
-cprConRes tag arg_tys
+cprConRes :: ConTag -> [DmdResult] -> CPRResult
+cprConRes tag arg_ress
   | opt_CprOff       = NoCPR
-  | opt_NestedCprOff = cutCPRResult flatCPRDepth $ RetCon tag (map get_res arg_tys)
-  | otherwise        = cutCPRResult maxCPRDepth  $ RetCon tag (map get_res arg_tys)
-  where
-    get_res :: DmdType -> DmdResult
-    get_res (DmdType _ [] r) = r       -- Only for data-typed arguments!
-    get_res _                = topRes
+  | opt_NestedCprOff = cutCPRResult flatCPRDepth $ RetCon tag arg_ress
+  | otherwise        = cutCPRResult maxCPRDepth  $ RetCon tag arg_ress
+
+getDmdResult :: DmdType -> DmdResult
+getDmdResult (DmdType _ [] r) = r       -- Only for data-typed arguments!
+getDmdResult _                = topRes
 
 vanillaCprConRes :: ConTag -> Arity -> CPRResult
 vanillaCprConRes tag arity

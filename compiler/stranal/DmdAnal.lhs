@@ -100,24 +100,28 @@ c) The application rule wouldn't be right either
 \begin{code}
 dmdAnalArg :: AnalEnv 
            -> Demand 	-- This one takes a *Demand*
-           -> CoreExpr -> (DmdType, CoreExpr)
+           -> CoreExpr
+           -> (DmdType, DmdResult, CoreExpr)
 -- Used for function arguments
 dmdAnalArg env dmd e
   | exprIsTrivial e = dmdAnalStar env dmd e
   | otherwise       = dmdAnalStar env (oneifyDmd dmd) e
+    -- oneifyDmd: This is a thunk, so its content will be evaluated at most once
 
 -- Do not process absent demands
 -- Otherwise act like in a normal demand analysis
 -- See |-* relation in the companion paper
 dmdAnalStar :: AnalEnv 
             -> Demand 	-- This one takes a *Demand*
-            -> CoreExpr -> (DmdType, CoreExpr)
+            -> CoreExpr
+            -> (DmdType, DmdResult, CoreExpr)
 dmdAnalStar env dmd e 
   | (cd, defer_and_use) <- toCleanDmd dmd
   , (dmd_ty, e')        <- dmdAnal env cd e
   = let dmd_ty' = postProcessDmdTypeM defer_and_use dmd_ty
     in -- pprTrace "dmdAnalStar" (vcat [ppr e, ppr dmd, ppr defer_and_use, ppr dmd_ty, ppr dmd_ty'])
-       (dmd_ty', e')
+        -- We also return the unmodified DmdResult, to store it in nested CPR information
+       (dmd_ty', getDmdResult dmd_ty,  e')
 
 -- Main Demand Analsysis machinery
 dmdAnal :: AnalEnv
@@ -508,7 +512,7 @@ completeApp env (fun_ty, fun') (arg:args)
   | otherwise     = completeApp env (res_ty `bothDmdType` arg_ty, App fun' arg') args
   where
     (arg_dmd, res_ty) = splitDmdTy fun_ty
-    (arg_ty, arg')    = dmdAnalArg env arg_dmd arg
+    (arg_ty, _, arg')    = dmdAnalArg env arg_dmd arg
 
 ----------------
 dmdAnalVarApp :: AnalEnv -> CleanDemand -> Id
@@ -517,7 +521,7 @@ dmdAnalVarApp env dmd fun args
   | Just con <- isDataConWorkId_maybe fun  -- Data constructor
   , isVanillaDataCon con
   , n_val_args == dataConRepArity con      -- Saturated
-  , let cpr_info = Converges (cprConRes (dataConTag con) arg_tys)
+  , let cpr_info = Converges (cprConRes (dataConTag con) arg_rets)
         res_ty = foldl bothDmdType (DmdType emptyDmdEnv [] cpr_info) arg_tys
   = -- pprTrace "dmdAnalVarApp" (vcat [ ppr con, ppr args, ppr n_val_args, ppr cxt_ds
     --                                , ppr arg_tys, ppr cpr_info, ppr res_ty]) $
@@ -535,21 +539,21 @@ dmdAnalVarApp env dmd fun args
   where
     n_val_args = valArgCount args
     cxt_ds = splitProdCleanDmd  n_val_args dmd
-    (arg_tys, args') = anal_args cxt_ds args
+    (arg_tys, arg_rets, args') = anal_args cxt_ds args
         -- The constructor itself is lazy
         -- See Note [Data-con worker strictness] in MkId
   
-    anal_args :: [Demand] -> [CoreExpr] -> ([DmdType], [CoreExpr])
-    anal_args _ [] = ([],[])
+    anal_args :: [Demand] -> [CoreExpr] -> ([DmdType], [DmdResult], [CoreExpr])
+    anal_args _ [] = ([],[],[])
     anal_args ds (arg : args)
       | isTypeArg arg 
-      , (arg_tys, args') <- anal_args ds args
-      = (arg_tys, arg:args')
+      , (arg_tys, arg_rets, args') <- anal_args ds args
+      = (arg_tys, arg_rets, arg:args')
     anal_args (d:ds) (arg : args)
-      | (arg_ty,  arg')  <- dmdAnalArg env d arg
-      , (arg_tys, args') <- anal_args ds args
+      | (arg_ty, arg_ret, arg')  <- dmdAnalArg env d arg
+      , (arg_tys, arg_rets, args') <- anal_args ds args
       = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_ty, ppr arg' ])
-        (arg_ty:arg_tys, arg':args')
+        (arg_ty:arg_tys, arg_ret:arg_rets, arg':args')
     anal_args ds args = pprPanic "anal_args" (ppr args $$ ppr ds)
 \end{code}
 
@@ -834,7 +838,7 @@ annotateLamIdBndr env arg_of_dfun dmd_ty one_shot id
                  Nothing  -> main_ty
                  Just unf -> main_ty `bothDmdType` unf_ty
                           where
-                             (unf_ty, _) = dmdAnalStar env dmd unf
+                             (unf_ty, _, _) = dmdAnalStar env dmd unf
 
     main_ty = addDemand dmd dmd_ty'
     (dmd_ty', dmd) = peelFV dmd_ty id
