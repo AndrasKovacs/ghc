@@ -668,7 +668,8 @@ dmdAnalRhs top_lvl rec_flag env id rhs
     (lazy_fv, sig_fv) = splitFVs is_thunk rhs_fv1
 
     -- Note [CPR for sum types]
-    rhs_res' | is_sum_type || (is_thunk && not_strict) = forgetCPR rhs_res
+    rhs_res' | (is_sum_type && not (isTopLevel top_lvl)) ||
+               (is_thunk && not_strict)                = forgetCPR rhs_res
              | otherwise                               = rhs_res
         
     -- See Note [CPR for thunks]
