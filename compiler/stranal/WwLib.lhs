@@ -584,8 +584,10 @@ mkWWcpr_help inner ty res
                     , \e body -> mkUnpackCase e co work_uniq data_con arg_vars (nested_decon body)
                     )
             |  otherwise
-            -> pprPanic "mkWWcpr:" $ ptext (sLit "non-algebraic or open body type") <+>
-                                     (ppr ty) <+> ptext (sLit "but CPR type") <+> ppr (res)
+            -> -- I would be happier if this were a error, but there are nasty corner cases.
+               WARN ( True, ptext (sLit "mkWwcpr: non-algebraic or open body type") <+>
+                                  (ppr ty) <+> ptext (sLit "but CPR type") <+> ppr (res) )
+               mkWWcpr_help inner ty topRes
         Nothing -> do
            uniq <- getUniqueM
            let var = mk_ww_local uniq ty
