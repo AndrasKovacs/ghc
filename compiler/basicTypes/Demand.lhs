@@ -779,7 +779,6 @@ seqCPRResult :: CPRResult -> ()
 seqCPRResult NoCPR         = ()
 seqCPRResult (RetCon n rs) = n `seq` seqListWith seqDmdResult rs
 
-
 ------------------------------------------------------------------------
 -- Combined demand result                                             --
 ------------------------------------------------------------------------

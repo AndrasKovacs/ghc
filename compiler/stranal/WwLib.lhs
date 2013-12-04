@@ -542,6 +542,7 @@ mkWWcpr body_ty res
                   , \ body     -> decon body (Var arg_var)
                   , idType arg_var )
 
+         _ | isWWUseless body_ty res -> return (id, id, body_ty)
          _ -> do
            wrap_wild_uniq <- getUniqueM
 
@@ -592,6 +593,19 @@ mkWWcpr_help inner ty res
                   , Var var
                   , \e body -> mkRename e var body
                   )
+
+-- If something is known to return (# t1, t2 #), this is a CPR property. But it would
+-- be useless to then add a wrapper that unwraps that unboxed tuple and recreates it.
+-- So try to detect that situation here.
+isWWUseless ::  Type -> DmdResult -> Bool
+isWWUseless ty res
+    | Just (con_tag, rs) <- returnsCPR_maybe False res
+    , all isTopRes rs
+    , Just (data_con, _, _, _) <- deepSplitCprType_maybe con_tag ty
+    , isUnboxedTupleCon data_con
+    = True
+    | otherwise
+    = False
 
 -- mkRename e v body
 -- binds v to e in body. This will later be removed by the simplifiers
