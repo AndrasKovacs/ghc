@@ -998,8 +998,7 @@ in GHC itself where the tuple was DynFlags
 \begin{code}
 type Demand = JointDmd
 
-type DmdEnv = VarEnv Demand   -- If a variable v is not in the domain of the
-                              -- DmdEnv, it implicitly maps to <Lazy,Absent>
+type DmdEnv = VarEnv Demand   -- See Note [Default demand on free variables]
 
 data DmdType = DmdType 
                   DmdEnv        -- Demand on explicitly-mentioned 
@@ -1045,8 +1044,14 @@ Similarly with
 we get dt_scrut from the scrutinee and dt_rhs from the RHS, and then
 compute (dt_rhs `bothType` dt_scrut).
 
-We take the CPR info from FIRST argument, but combine both to get
-termination info.
+We
+ 1. combine the information on the free variables,
+ 2. take the demand on arguments from the first argument
+ 3. combine the termination results, but
+ 4 take CPR info from the first argument.
+
+3 and 4 are implementd in bothDmdResult.
+
 
 
 \begin{code}
@@ -1075,25 +1080,16 @@ lubDmdType (DmdType fv1 ds1 r1) (DmdType fv2 ds2 r2)
     lub_ds []     []       = []
     lub_ds ds1    []       = map (`lubDmd` resTypeArgDmd r2) ds1
     lub_ds []     ds2      = map (resTypeArgDmd r1 `lubDmd`) ds2
- 
--- TODO: This is used for both
---  * f `bothDmdType` e (in which case divergence of e does not prevent CPR of f e), and
---  * e `bothDmdType` scrut (in which case divergence of scurt prevence convergence of  case scrut of _ -> e)
--- HACK for now: Use bothDmdTypeCase for case
--- Need to take strict demand into account?
+
 bothDmdType :: DmdType -> DmdType -> DmdType
 bothDmdType (DmdType fv1 ds1 r1) (DmdType fv2 _ r2)
     -- See Note [Asymmetry of 'both' for DmdType and DmdResult]
     -- 'both' takes the argument/result info from its *first* arg,
     -- using its second arg just for its free-var info.
-    -- NB: Don't forget about r2!  It might be BotRes, which is
-    -- a bottom demand on all the in-scope variables.
-  = DmdType both_fv2 ds1 (r1 `bothDmdResult` r2)
-
-  where
-    both_fv  = plusVarEnv_C bothDmd fv1 fv2
-    both_fv1 = modifyEnv (isBotRes r1) (`bothDmd` botDmd) fv2 fv1 both_fv
-    both_fv2 = modifyEnv (isBotRes r2) (`bothDmd` botDmd) fv1 fv2 both_fv1
+    -- Also See Note [Default demand on free variables]
+  = DmdType (fv1 `bothDmdEnv` fv2)
+            ds1
+            (r1 `bothDmdResult` r2)
 
 bothDmdEnv :: DmdEnv -> DmdEnv -> DmdEnv
 bothDmdEnv = plusVarEnv_C bothDmd
@@ -1257,17 +1253,29 @@ peelManyCalls arg_ds (CD { sd = str, ud = abs })
 
 peelFV :: DmdType -> Var -> (DmdType, Demand)
 peelFV (DmdType fv ds res) id = -- pprTrace "rfv" (ppr id <+> ppr dmd $$ ppr fv)
-                               (DmdType fv' ds res, dmd)
+                               (DmdType fv' ds res, dmd')
   where
   fv' = fv `delVarEnv` id
-  dmd = lookupVarEnv fv id `orElse` deflt
-  -- See note [Default demand for variables]
-  deflt | isBotRes res = botDmd
-        | otherwise    = absDmd
+  -- See note [Default demand on free variables]
+  dmd  = lookupVarEnv fv id `orElse` absDmd
+  dmd' | isBotRes res = dmd `bothDmd` botDmd
+       | otherwise    = dmd
 
 addDemand :: Demand -> DmdType -> DmdType
 addDemand dmd (DmdType fv ds res) = DmdType fv (dmd:ds) res
 \end{code}
+
+Note [Default demand on free variables]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If the variable is not mentioned in the environment of a demand type,
+its demand is taken to be a result demand of the type: either L or the
+bottom. Both are safe from the semantical pont of view, however, for
+the safe result we also have absent demand set to Abs, which makes it
+possible to safely ignore non-mentioned variables (their joint demand
+is <L,A>). absDmd is the identity of bothDmd.
+
+If the result is bottom, we we still have to `bothDmd` the `botDmd` to the
+value in the environment; as we do _not_ do that in bothDmdType.
 
 Note [Always analyse in virgin pass]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
