@@ -1209,14 +1209,18 @@ postProcessDmdType (True,  One)  ty = deferType ty
 postProcessDmdType (False, One)  ty = ty
 
 deferType, useType, deferAndUse :: DmdType -> DmdType
-deferType   (DmdType fv ds _)      = DmdType (deferEnv fv)    (map deferDmd ds)    topRes
+deferType   (DmdType fv ds res_ty) = DmdType (deferEnv fv)    (map deferDmd ds)    (deferRes res_ty)
 useType     (DmdType fv ds res_ty) = DmdType (useEnv fv)      (map useDmd ds)      res_ty
-deferAndUse (DmdType fv ds _)      = DmdType (deferUseEnv fv) (map deferUseDmd ds) topRes
+deferAndUse (DmdType fv ds res_ty) = DmdType (deferUseEnv fv) (map deferUseDmd ds) (deferRes res_ty)
 
 deferEnv, useEnv, deferUseEnv :: DmdEnv -> DmdEnv
 deferEnv    fv = mapVarEnv deferDmd fv
 useEnv      fv = mapVarEnv useDmd fv
 deferUseEnv fv = mapVarEnv deferUseDmd fv
+
+deferRes :: DmdResult -> DmdResult
+deferRes Diverges = topRes  -- Kill outer divergence
+deferRes r        = r       -- Preserve CPR info
 
 deferDmd, useDmd, deferUseDmd :: JointDmd -> JointDmd
 deferDmd    (JD {strd=_, absd=a}) = mkJointDmd Lazy a
