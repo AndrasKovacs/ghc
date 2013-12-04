@@ -581,7 +581,7 @@ mkWWcpr_help inner ty res
                     , \e body -> mkUnpackCase e co data_con arg_vars (nested_decon body)
                     )
             |  otherwise
-            -> -- I would be happier if this were a error, but there are nasty corner cases.
+            -> -- See Note [non-algebraic or open body type warning]
                WARN ( True, ptext (sLit "mkWwcpr: non-algebraic or open body type") <+>
                                   (ppr ty) <+> ptext (sLit "but CPR type") <+> ppr (res) )
                mkWWcpr_help inner ty topRes
@@ -612,6 +612,25 @@ mkUnpackCase scrut co boxing_con unpk_args body
   where
     casted_scrut = scrut `mkCast` co
 \end{code}
+
+Note [non-algebraic or open body type warning]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There are a few cases where the W/W transformation is told that something
+returns a constructor, but the type at hand doesn't really match this. One
+real-world example involves unsafeCoerce:
+  foo = IO a
+  foo = unsafeCoere c_exit
+  foreign import ccall "c_exit" c_exit :: IO ()
+Here CPR will tell you that `foo` returns a () constructor for sure, but trying
+to create a worker/wrapper for type `a` obviously fails.
+(This was a real example until ee8e792  in libraries/base.)
+
+It does not seem feasilbe to avoid all such cases already in the analyser (and
+after all, the analysis is not really wrong), so we simply do nothing here in
+mkWWcpr. But we still want to emit warning with -DDEBUG, to hopefully catch
+other cases where something went avoidably wrong.
+
 
 Note [Profiling and unpacking]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
