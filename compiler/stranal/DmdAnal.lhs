@@ -224,7 +224,7 @@ dmdAnal env dmd (Case scrut case_bndr ty [alt@(DataAlt dc, _, _)])
         scrut_dmd  = scrut_dmd1 `bothCleanDmd` scrut_dmd2
 
 	(scrut_ty, scrut') = dmdAnal env scrut_dmd scrut
-        res_ty             = alt_ty1 `bothDmdTypeCase` scrut_ty
+        res_ty             = alt_ty1 `bothDmdType` scrut_ty
     in
 --    pprTrace "dmdAnal:Case1" (vcat [ text "scrut" <+> ppr scrut
 --                                   , text "dmd" <+> ppr dmd
@@ -240,7 +240,7 @@ dmdAnal env dmd (Case scrut case_bndr ty alts)
 	(alt_tys, alts')     = mapAndUnzip (dmdAnalAlt env dmd) alts
 	(scrut_ty, scrut')   = dmdAnal env cleanEvalDmd scrut
 	(alt_ty, case_bndr') = annotateBndr env (foldr lubDmdType botDmdType alt_tys) case_bndr
-        res_ty               = alt_ty `bothDmdTypeCase` scrut_ty
+        res_ty               = alt_ty `bothDmdType` scrut_ty
     in
 --    pprTrace "dmdAnal:Case2" (vcat [ text "scrut" <+> ppr scrut
 --                                   , text "scrut_ty" <+> ppr scrut_ty

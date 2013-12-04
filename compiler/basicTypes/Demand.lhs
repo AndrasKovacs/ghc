@@ -18,7 +18,7 @@ module Demand (
         isTopDmd, isBotDmd, isAbsDmd, isSeqDmd, 
         peelUseCall, cleanUseDmd_maybe, strictenDmd, bothCleanDmd,
 
-        DmdType(..), dmdTypeDepth, lubDmdType, bothDmdEnv, bothDmdType, bothDmdTypeCase,
+        DmdType(..), dmdTypeDepth, lubDmdType, bothDmdEnv, bothDmdType,
         topDmdType, botDmdType, mkDmdType, mkTopDmdType, 
         dmdTypeArgTop, addDemand,
 
@@ -1087,16 +1087,12 @@ bothDmdType (DmdType fv1 ds1 r1) (DmdType fv2 _ r2)
     -- using its second arg just for its free-var info.
     -- NB: Don't forget about r2!  It might be BotRes, which is
     -- a bottom demand on all the in-scope variables.
-  = DmdType both_fv2 ds1 r1
+  = DmdType both_fv2 ds1 (r1 `bothDmdResult` r2)
+
   where
     both_fv  = plusVarEnv_C bothDmd fv1 fv2
     both_fv1 = modifyEnv (isBotRes r1) (`bothDmd` botDmd) fv2 fv1 both_fv
     both_fv2 = modifyEnv (isBotRes r2) (`bothDmd` botDmd) fv1 fv2 both_fv1
-
-bothDmdTypeCase :: DmdType -> DmdType -> DmdType
-bothDmdTypeCase d1@(DmdType _ _ r1) d2@(DmdType _ _ r2)
-  = DmdType fv' ds' (r1 `bothDmdResult` r2)
-  where (DmdType fv' ds' _) = bothDmdType d1 d2
 
 bothDmdEnv :: DmdEnv -> DmdEnv -> DmdEnv
 bothDmdEnv = plusVarEnv_C bothDmd
