@@ -786,8 +786,9 @@ seqCPRResult (RetCon n rs) = n `seq` seqListWith seqDmdResult rs
 
 -- [cprRes] lets us switch off CPR analysis
 -- by making sure that everything uses TopRes
-topRes, botRes :: DmdResult
+topRes, convRes, botRes :: DmdResult
 topRes = Dunno NoCPR
+convRes = Converges NoCPR
 botRes = Diverges
 
 maxCPRDepth :: Int
@@ -1206,19 +1207,16 @@ postProcessDmdType (False, Many) ty  = useType ty
 postProcessDmdType (True,  One)  ty = deferType ty
 postProcessDmdType (False, One)  ty = ty
 
+-- If we use something lazily, we want to ignore any possible divergence
 deferType, useType, deferAndUse :: DmdType -> DmdType
-deferType   (DmdType fv ds res_ty) = DmdType (deferEnv fv)    (map deferDmd ds)    (deferRes res_ty)
+deferType   (DmdType fv ds _)      = DmdType (deferEnv fv)    (map deferDmd ds)    convRes
 useType     (DmdType fv ds res_ty) = DmdType (useEnv fv)      (map useDmd ds)      res_ty
-deferAndUse (DmdType fv ds res_ty) = DmdType (deferUseEnv fv) (map deferUseDmd ds) (deferRes res_ty)
+deferAndUse (DmdType fv ds _)      = DmdType (deferUseEnv fv) (map deferUseDmd ds) convRes
 
 deferEnv, useEnv, deferUseEnv :: DmdEnv -> DmdEnv
 deferEnv    fv = mapVarEnv deferDmd fv
 useEnv      fv = mapVarEnv useDmd fv
 deferUseEnv fv = mapVarEnv deferUseDmd fv
-
-deferRes :: DmdResult -> DmdResult
-deferRes Diverges = topRes  -- Kill outer divergence
-deferRes r        = r       -- Preserve CPR info
 
 deferDmd, useDmd, deferUseDmd :: JointDmd -> JointDmd
 deferDmd    (JD {strd=_, absd=a}) = mkJointDmd Lazy a
