@@ -98,15 +98,12 @@ c) The application rule wouldn't be right either
    evaluation of f in a C(L) demand!
 
 \begin{code}
-dmdAnalArg :: AnalEnv 
-           -> Demand 	-- This one takes a *Demand*
-           -> CoreExpr
-           -> (DmdType, DmdResult, CoreExpr)
--- Used for function arguments
-dmdAnalArg env dmd e
-  | exprIsTrivial e = dmdAnalStar env dmd e
-  | otherwise       = dmdAnalStar env (oneifyDmd dmd) e
-    -- oneifyDmd: This is a thunk, so its content will be evaluated at most once
+-- If e is complicated enough to become a thunk, its contents will be evaluated
+-- at most once, so oneify it.
+dmdTransformThunkDmd :: CoreExpr -> Demand -> Demand
+dmdTransformThunkDmd e
+  | exprIsTrivial e = id
+  | otherwise       = oneifyDmd
 
 -- Do not process absent demands
 -- Otherwise act like in a normal demand analysis
@@ -512,7 +509,7 @@ completeApp env (fun_ty, fun') (arg:args)
   | otherwise     = completeApp env (res_ty `bothDmdType` arg_ty, App fun' arg') args
   where
     (arg_dmd, res_ty) = splitDmdTy fun_ty
-    (arg_ty, _, arg')    = dmdAnalArg env arg_dmd arg
+    (arg_ty, _, arg') = dmdAnalStar env (dmdTransformThunkDmd arg arg_dmd) arg
 
 ----------------
 dmdAnalVarApp :: AnalEnv -> CleanDemand -> Id
@@ -550,7 +547,7 @@ dmdAnalVarApp env dmd fun args
       , (arg_tys, arg_rets, args') <- anal_args ds args
       = (arg_tys, arg_rets, arg:args')
     anal_args (d:ds) (arg : args)
-      | (arg_ty, arg_ret, arg')  <- dmdAnalArg env d arg
+      | (arg_ty, arg_ret, arg')  <- dmdAnalStar env (dmdTransformThunkDmd arg d) arg
       , (arg_tys, arg_rets, args') <- anal_args ds args
       = --pprTrace "dmdAnalVarApp arg" (vcat [ ppr d, ppr arg, ppr arg_ty, ppr arg' ])
         (arg_ty:arg_tys, arg_ret:arg_rets, arg':args')
